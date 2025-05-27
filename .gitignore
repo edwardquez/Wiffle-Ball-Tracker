@@ -1,0 +1,24 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environment
+venv/
+.env
+
+# VS Code settings
+.vscode/
+
+# Log files
+*.log
+
+# Streamlit cache
+.streamlit/
+
+# Environment variables file
+.env
+
+atbats.csv
+games.csv
+players.csv
