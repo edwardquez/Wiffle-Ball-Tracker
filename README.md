@@ -12,6 +12,10 @@ This project is a web-based stat-tracking system designed for casual groups or w
 - Data Visualization – Live graphs and figures for performance comparisons
 
 
+## Live Demo
+
+Check out the app here: [Wiffle ball Stat Tracker on Streamlit](https://wiffle.streamlit.app)
+
 ## Installation Instructions for Local Use
 
 ### Prerequisites: 
