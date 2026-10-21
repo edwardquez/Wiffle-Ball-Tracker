@@ -1,354 +1,129 @@
-## Packages 
+## Packages
 import streamlit as st
 import pandas as pd
-import os
-import uuid 
-import random
-import json
 
-from urllib.parse import quote
-from dotenv import load_dotenv
-from datetime import datetime 
-from pymongo import MongoClient
+import styles as ui
+import stats
+from db import league
 
-load_dotenv()
-ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD")
+# Page setup (must come first), then the shared look
+st.set_page_config(page_title="Wiffle Ball Stats", layout="wide")
+ui.apply()
 
-# Load MongoDB URI from .env or environment variables
-load_dotenv()
-MONGO_URI = os.getenv('MONGO_URI')  
+# League tables, shared and cached for a few seconds (see db.py)
+lg = league()
+players = lg.players
+completed = lg.completed
 
-# Connect to MongoDB Atlas
-client = MongoClient(MONGO_URI)
-db = client['blitzballstats'] 
+MIN_AB = 5   # an AVG leader with fewer at-bats than this gets a "small sample" tag
+MIN_IP = 2   # minimum innings pitched to qualify for the ERA leader
 
 
-# Page Title
-st.set_page_config(
-    page_title ="Wiffle Ball Stats"
+# ---------------- Intro ---------------- #
+season = int(completed["date"].dt.year.max()) if completed["date"].notna().any() else None
+ui.html(
+    (ui.eyebrow(f"Season {season}") if season else "")
+    + "<h1 style='margin:16px 0 0; font-size:clamp(40px, 5vw, 60px); line-height:1.05;'>Wiffle Ball Stat Tracker</h1>"
+    + f"<p style='margin:16px 0 0; max-width:640px; font-size:17px; line-height:1.6; color:{ui.BODY};'>"
+    "A stat tracker for pickup Wiffle and Blitzball games with friends. Every at-bat is logged "
+    "(batter, pitcher, count, runners on, outcome, RBIs), and batting, pitching and head-to-head "
+    "stats are built from those events. Try scoring a game in practice mode!</p>"
+    + f"<p style='margin:12px 0 0; font-family:{ui.MONO}; font-size:13px; color:{ui.MUTED};'>"
+    "Python / Streamlit / MongoDB Atlas / pandas / Plotly</p>"
+)
+st.write("")
+
+# A game being scored right now: point people to the Live page
+in_progress = lg.games[(lg.games["mode"] == "live") & (lg.games["status"] == "active")]
+if not in_progress.empty:
+    g = in_progress.iloc[-1]
+    ui.html(f"<a href='./Live' target='_self' style='display:flex; align-items:center; gap:10px; margin:22px 0 0; "
+            f"padding:12px 14px; border:1px solid {ui.INK}; text-decoration:none; color:{ui.INK};'>"
+            f"<span style='width:9px; height:9px; border-radius:50%; background:{ui.LOSS}; flex:none;'></span>"
+            f"<span><b>Game in progress</b> · {ui.game_label(g['game_id'])} · follow it live &rarr;</span></a>")
+
+
+# ---------------- League at a glance ---------------- #
+runs = int(completed["team1_score"].sum() + completed["team2_score"].sum())
+ui.html(
+    ui.section_label("League at a glance", margin_top=40)
+    + ui.kpi_grid([
+        {"value": len(completed), "label": "Games played"},
+        {"value": len(lg.pa), "label": "Plate appearances"},
+        {"value": players["name"].nunique(), "label": "Players"},
+        {"value": runs, "label": "Runs scored"},
+    ])
 )
 
 
-# MongoDB collections
-players_col = db["players"]
-games_col = db["games"]
-atbats_col = db["atbats"]
+# ---------------- Leaders ---------------- #
+# Shared definitions from stats.py, so these match every other page
+batting = lg.batting()
+pitching = lg.pitching()
+pitching = pitching[pitching["IP"] >= MIN_IP]
 
 
-# Define expected columns
-expected_player_fields = [
-    "name", "team", "games_played", "at_bats", "hits", "singles", "doubles",
-    "triples", "home_runs", "walks", "rbi", "strikeouts", "batting_average",
-    "obp", "slugging", "innings_pitched", "era", "bb"
-]
-
-expected_game_fields = [
-    "game_id", "date", "team1", "team2", "team1_players", "team2_players",
-    "status", "team1_score", "team2_score", "ended_innings"
-]
-
-expected_atbat_fields = [
-    "game_id", "inning", "batter", "pitcher", "strikes", "balls",
-    "runners_on", "outcome", "outs_recorded", "rbi"
-]
-
-# Load from MongoDB
-players = pd.DataFrame(list(players_col.find()))
-games = pd.DataFrame(list(games_col.find()))
-atbats = pd.DataFrame(list(atbats_col.find()))
-
-# Ensure all expected columns exist in each DataFrame
-for col in expected_player_fields:
-    if col not in players.columns:
-        players[col] = None
-
-for col in expected_game_fields:
-    if col not in games.columns:
-        games[col] = None
-
-for col in expected_atbat_fields:
-    if col not in atbats.columns:
-        atbats[col] = None
+def leaders(df, col, ascending=False, round_to=3):
+    """Everyone tied for the best value (compared as displayed), and that value."""
+    if df.empty:
+        return [], None
+    values = df[col].astype(float).round(round_to)
+    best = values.min() if ascending else values.max()
+    return sorted(values[values == best].index.tolist()), best
 
 
+# Everyone with an at-bat can lead in AVG; a leader under MIN_AB at-bats gets a small sample tag
+avg_names, avg_val = leaders(batting[batting["AB"] >= 1], "AVG", round_to=3)
+avg_few = [n for n in avg_names if batting.loc[n, "AB"] < MIN_AB]
+avg_tag = ui.small_sample(f"Fewer than {MIN_AB} at-bats") if avg_few else ""
+hr_names, hr_val = leaders(batting, "HR", round_to=0)
+rbi_names, rbi_val = leaders(batting, "RBI", round_to=0)
+era_names, era_val = leaders(pitching.dropna(subset=["ERA"]), "ERA", ascending=True, round_to=2)
+war_names, war_val = leaders(stats.war(lg), "WAR", round_to=1)
+
+ui.html(
+    ui.section_label("Leaders", margin_top=40)
+    + ui.kpi_grid([
+        {"value": ui.rate(avg_val) if avg_names else "—", "label": "Batting average",
+         "who": ui.names_with_ties(avg_names) if avg_names else "No at-bats yet", "who_tag": avg_tag},
+        {"value": int(hr_val) if hr_names else "—", "label": "Home runs", "who": ui.names_with_ties(hr_names)},
+        {"value": int(rbi_val) if rbi_names else "—", "label": "RBIs", "who": ui.names_with_ties(rbi_names)},
+        {"value": f"{era_val:.2f}" if era_names else "—", "label": "ERA",
+         "who": ui.names_with_ties(era_names) if era_names else "Not enough innings yet"},
+        {"value": f"{war_val:+.1f}" if war_names and war_val else "—", "label": "Career WAR",
+         "who": ui.names_with_ties(war_names) if war_names and war_val else "Not enough games yet"},
+    ], min_width=130)
+)
 
 
-# Title
-st.title("Wiffle Ball Stat Tracker")
+# ---------------- Latest game ---------------- #
+if not completed.empty:
+    latest = completed.iloc[-1]
+    s1, s2 = int(latest["team1_score"]), int(latest["team2_score"])
+
+    # Match number = its position among that season's completed games (same as the Game Log)
+    same_season = completed[completed["date"].dt.year == latest["date"].year] if pd.notna(latest["date"]) else completed
+    match_no = list(same_season["_id"]).index(latest["_id"]) + 1
+
+    result_tag = ui.tag("Draw", ui.DRAW) if s1 == s2 else ui.tag("Final", ui.WIN)
+    ui.html(
+        ui.section_label("Latest game", margin_top=40)
+        + f"<div style='border-top:2px solid {ui.INK};'>"
+        + f"<div style='display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px; "
+        f"padding:14px 0; font-size:14px; color:{ui.MUTED}; border-bottom:1px solid {ui.RULE};'>"
+        + f"<span style='display:inline-flex; align-items:center; gap:10px;'>{result_tag}"
+        f"Match {match_no} · {ui.date_text(latest['date'])}</span>"
+        + "<a href='./Game_Log' target='_self' style='font-weight:500;'>Full game log</a></div>"
+        + ui.scoreline(str(latest["team1"]), s1, str(latest["team2"]), s2)
+        + f"<div style='border-bottom:1px solid {ui.RULE};'></div></div>"
+    )
 
 
-st.header("Player Management:")
-
-with st.form("add_player_form"):
-    new_name = st.text_input("Add New Player", "")
-    submitted = st.form_submit_button("➕ Add Player")
-
-    if submitted:
-        if new_name.strip() != "" and new_name not in players['name'].values:
-            new_player = {"name": new_name}
-            players_col.insert_one({ "name": new_name })
-            players = pd.DataFrame(list(players_col.find()))
-            st.success(f"Player '{new_name}' added.")
-        elif new_name in players['name'].values:
-            st.warning("Player already exists.")
-        else:
-            st.error("Name cannot be empty.")
-
-
-from urllib.parse import quote
-
-with st.expander("📋 Current Players"):
-    player_list = players["name"].tolist()
-    num_cols = 3
-
-    # Loop through players and place them in rows of 3 columns
-    for i in range(0, len(player_list), num_cols):
-        cols = st.columns(num_cols)
-        for j in range(num_cols):
-            if i + j < len(player_list):
-                player = player_list[i + j]
-                player_encoded = quote(player)
-                cols[j].markdown(
-                    f"""
-                    <a href="./Player_Dashboard?player={player_encoded}" target="_self">
-                        <button style="
-                            padding: 10px 16px;
-                            margin: 6px 0;
-                            width: 100%;
-                            background-color: #262730;
-                            color: #FFFFF;
-                            border: 1px solid #ccc;
-                            border-radius: 8px;
-                            font-size: 15px;
-                            cursor: pointer;
-                        ">{player}</button>
-                    </a>
-                    """,
-                    unsafe_allow_html=True
-                )
-
-
-
-#----- Section: Start a New Game----- #
-st.header("Start Game:")
-with st.expander("Start a New Game", expanded = False):
-    # Select teams from existing players
-    team1 = st.multiselect("Select Team 1 Players", options=players["name"].tolist(), key="team1")
-    team2 = st.multiselect("Select Team 2 Players", options=players["name"].tolist(), key="team2")
-
-    # Date and game ID
-    game_date = st.date_input("Game Date")
-    game_id = f"Game_{len(games) + 1}"
-
-    # Start button
-    if st.button("⚾ Start Game"):
-        if not team1 or not team2:
-            st.error("You must select at least one player for each team.")
-        elif set(team1) & set(team2):
-            st.error("A player cannot be on both teams.")
-        else:
-            new_game = {
-                "game_id": game_id,
-                "date": str(game_date),
-                "team1": ", ".join(team1),
-                "team2": ", ".join(team2),
-                "team1_players": ",".join(team1),
-                "team2_players": ", ".join(team2),
-                "status": "active"
-            }
-            games_col.insert_one(new_game)
-            games = pd.DataFrame(list(games_col.find()))
-
-            st.success(f"✅ Game {game_id} started and saved!")
-
-
-# ------ Section: Record an at-bat ------ #
-st.header("Record At-Bats / Game:")
-active_games = games[games["status"] == "active"] if "status" in games.columns else games
-if active_games.empty:
-    st.warning("Please start a game first.")
-else:
-    with st.expander("Record At-Bat", expanded=False):
-        with st.form("atbat_form"):
-            current_game = st.selectbox("Select Game", active_games["game_id"])
-            current_game_row = active_games[active_games["game_id"] == current_game].iloc[0]
-            def parse_ended_innings(val):
-                if pd.isna(val) or val == "":
-                    return []
-                return val.split(";")
-
-            ended_innings = parse_ended_innings(current_game_row.get("ended_innings", ""))
-
-            current_game_atbats = atbats[atbats["game_id"] == current_game]
-            all_innings = [f"{half} {i}" for i in range(1, 7) for half in ["Top", "Bottom"]]
-            available_innings = [inn for inn in all_innings if inn not in ended_innings]
-            if not available_innings:
-                st.warning("All innings have been ended for this game.")
-                st.stop()
-            selected_inning = st.selectbox("Inning", available_innings)
-            half_inning, inning_number = selected_inning.split()
-            inning_number = int(inning_number)
-
-            # Extract team players
-            current_game_row = games[games["game_id"] == current_game].iloc[0]
-            team1_players = [p.strip() for p in str(current_game_row["team1"]).split(",") if p.strip()]
-            team2_players = [p.strip() for p in str(current_game_row["team2"]).split(",") if p.strip()]
-
-            # Prefix names with team label
-            team1_options = [f"Team 1 - {p}" for p in team1_players]
-            team2_options = [f"Team 2 - {p}" for p in team2_players]
-            all_options = team1_options + team2_options
-
-            # Select batter and pitcher
-            batter_label = st.selectbox("Select Batter", all_options)
-            pitcher_label = st.selectbox("Select Pitcher", all_options)
-
-            # Extract actual names
-            batter = batter_label.split(" - ")[-1]
-            pitcher = pitcher_label.split(" - ")[-1]
-
-
-
-            strikes = st.selectbox("Strikes", [0, 1, 2, 3])
-            balls = st.selectbox("Balls", [0, 1, 2, 3, 4])
-            runners_on = st.selectbox("Runners on Base", [0, 1, 2, 3])
-            outcome = st.selectbox("Outcome", [
-                "Single", "Double", "Triple", "Home Run", "Ground Out", "Pop Out", "Line Out",
-                "Strike Out", "Walk", "Fielder's Choice", "Sacrifice Fly", "Double Play", "Triple Play"
-            ])
-            # Automatically determine outs recorded
-            if outcome in ["Ground Out", "Pop Out", "Line Out", "Strike Out", "Fielder's Choice", "Sacrifice Fly"]:
-                outs_on_play = 1
-            elif outcome == "Double Play":
-                outs_on_play = 2
-            elif outcome == "Triple Play":
-                outs_on_play = 3
-            else:
-                outs_on_play = 0  # hits, walks, etc.
-            valid_rbi_outcomes = ["Single", "Double", "Triple", "Home Run", "Sacrifice Fly", "Fielder's Choice", "Walk", "Ground Out"]
-            rbi_enabled = outcome in valid_rbi_outcomes
-
-            if outcome == "Home Run":
-                rbi_default = 1 + runners_on  # 1 for the batter + number of runners
-            else:
-                rbi_default = 0
-            
-            rbis = st.number_input(
-            "Runs Batted In (RBIs)",
-            min_value=0,
-            max_value=4,
-            value=rbi_default,
-            disabled= not rbi_enabled
-            )
-
-
-            
-            st.markdown(f"**Outs recorded on this play**: `{outs_on_play}`")
-            st.markdown(f"**RBIs recorded on this play**: `{rbis}`")
-            # Add Checkbox to end this inning
-            end_inning = st.checkbox("End this half-inning after recording this at-bat")
-            submit_atbat = st.form_submit_button("Record At-Bat")
-
-            if submit_atbat:
-                if batter == pitcher:
-                    st.error("⚠️ Batter and pitcher cannot be the same player.")
-                else:
-                    outs_on_play = 1 if outcome in ["Ground Out", "Pop Out", "Line Out", "Strike Out", "Sacrifice Fly", "Fielder's Choice"] else 0
-                    atbat = {
-                        "game_id": current_game,
-                        "inning": f"{half_inning} {inning_number}",
-                        "batter": batter,
-                        "pitcher": pitcher,
-                        "strikes": strikes,
-                        "balls": balls,
-                        "runners_on": runners_on,
-                        "outcome": outcome,
-                        "outs_recorded": outs_on_play,
-                        "rbi": rbis
-                    }
-                    atbats_col.insert_one(atbat)
-                    atbats = pd.DataFrame(list(atbats_col.find()))
-                    st.success("✅ At-bat recorded!")
-                #End the inning and update games.csv
-                if end_inning:
-                    if selected_inning not in ended_innings:
-                        ended_innings.append(selected_inning)
-                        ended_str = ";".join(ended_innings)
-                        games_col.update_one({"game_id": current_game}, {"$set": {"ended_innings": ended_str}})
-                        games = pd.DataFrame(list(games_col.find()))
-                        st.success(f"✅ Inning '{selected_inning}' has been ended and locked. Refresh")
-
-
-
-    # ----- Undo Last At Bats/Games Button -----
-    with st.expander("Undo Last At-Bat"):
-        st.subheader("Undo Last At-Bat")
-
-        if not current_game_atbats.empty:
-            last_atbat = current_game_atbats.iloc[-1]
-            with st.form("undo_last_atbat_form"):
-                st.write(f"Last at-bat: `{last_atbat['batter']}` vs `{last_atbat['pitcher']}` | Outcome: `{last_atbat['outcome']}`")
-                confirm_last = st.checkbox("Confirm Undo Last At-Bat")
-                submitted = st.form_submit_button("Undo Last At-Bat")
-                if submitted and confirm_last:
-                    last_id = current_game_atbats.iloc[-1]["_id"]
-                    atbats_col.delete_one({"_id": last_id})
-                    atbats = pd.DataFrame(list(atbats_col.find()))
-                    st.success("✅ Last at-bat has been removed.")
-                elif submitted and not confirm_last:
-                    st.warning("Please confirm before undoing.")
-        else:
-            st.info("No at-bats recorded for this game yet.")
-
-# ---- End Current Game Button ---- #
-with st.expander("End Current Game"):
-    st.subheader("End Current Game")
-
-    active_games = games[games["status"] == "active"] 
-    if active_games.empty:
-        st.info("No active games to end.")
-    else:
-        current_game = st.selectbox("Select Game to End", active_games["game_id"])
-        confirm_end = st.checkbox(f"Confirm end of `{current_game}`")
-        team1_score = st.number_input("Enter Team 1 Score", min_value=0, max_value=99, step=1)
-        team2_score = st.number_input("Enter Team 2 Score", min_value=0, max_value=99, step=1)
-
-        if confirm_end and st.button("End Game"):
-            games_col.update_one(
-                {"game_id": current_game},
-                {"$set": {
-                    "status": "completed",
-                    "team1_score": team1_score,
-                    "team2_score": team2_score
-                }}
-            )
-            games = pd.DataFrame(list(games_col.find()))
-            st.success(f"✅  `{current_game}` has been marked as completed.")
-
-
-
-# Section: Reset Data
-with st.expander("Reset All Data"):
-    st.subheader("Reset All Data")
-    password_input = st.text_input("Enter admin password to reset data", type="password")
-    confirm_reset = st.checkbox("I confirm I want to reset all data.")
-    
-    if st.button("Reset Data"):
-        if password_input != ADMIN_PASSWORD:
-            st.error("Incorrect password. Access denied.")
-        elif not confirm_reset:
-            st.warning("Please confirm the reset by checking the box.")
-        else:
-            # Perform the data reset
-            players = pd.DataFrame(columns=players.columns)
-            games = pd.DataFrame(columns=games.columns)
-            atbats = pd.DataFrame(columns=atbats.columns)
-            players_col.delete_many({})
-            games_col.delete_many({})
-            atbats_col.delete_many({})
-            st.success("✅ Data has been reset.")
-
-
+# ---------------- Players ---------------- #
+ui.html(
+    ui.section_label("Players", margin_top=40)
+    + ui.player_links(sorted(players["name"].dropna().tolist()))
+)
 
 
 

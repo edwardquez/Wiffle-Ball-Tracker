@@ -5,7 +5,12 @@ __pycache__/
 
 # Virtual environment
 venv/
+
+# Environment variables (MongoDB URI, admin password)
 .env
+
+# Streamlit: keep local secrets out of GitHub (config.toml, the theme, should be committed)
+.streamlit/secrets.toml
 
 # VS Code settings
 .vscode/
@@ -13,12 +18,10 @@ venv/
 # Log files
 *.log
 
-# Streamlit cache
-.streamlit/
+# Test cache
+.pytest_cache/
 
-# Environment variables file
-.env
-
+# Data exports
 atbats.csv
 games.csv
 players.csv

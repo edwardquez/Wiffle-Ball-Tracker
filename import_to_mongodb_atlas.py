@@ -7,11 +7,11 @@ from dotenv import load_dotenv
 
 # Load MongoDB URI from .env or environment variables
 load_dotenv()
-MONGO_URI = os.getenv('MONGO_URI')  # e.g. mongodb+srv://<user>:<password>@cluster0.mongodb.net
+MONGO_URI = os.getenv('MONGO_URI')  
 
 # Connect to MongoDB Atlas
 client = MongoClient(MONGO_URI)
-db = client['Wiffleball_Database']  # Name your database
+db = client['Wiffleball_Database']  
 
 
 def import_csv_to_mongodb(csv_path, collection_name):

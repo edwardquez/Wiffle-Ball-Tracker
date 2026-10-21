@@ -1,0 +1,35 @@
+# Theme for the whole app: cream background, deep navy text, thin borders, square corners.
+# Streamlit reads this file automatically (locally and on Streamlit Cloud).
+
+[theme]
+base = "light"
+primaryColor = "#14213D"
+backgroundColor = "#FDFBF7"
+secondaryBackgroundColor = "#F6F2EA"
+textColor = "#14213D"
+linkColor = "#14213D"
+
+# Status colors used by st.success / st.error / st.info etc.
+greenColor = "#2E6B4E"
+redColor = "#A8432C"
+blueColor = "#3F5F86"
+yellowColor = "#9A6B12"
+
+# Fonts: IBM Plex Sans for text, Newsreader (serif) for headings, IBM Plex Mono for numbers/code
+font = "'IBM Plex Sans':https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&display=swap"
+headingFont = "Newsreader:https://fonts.googleapis.com/css2?family=Newsreader:opsz,wght@6..72,400;6..72,500;6..72,600&display=swap"
+headingFontWeights = 500
+codeFont = "'IBM Plex Mono':https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&display=swap"
+
+# Thin, crisp edges
+baseRadius = "2px"
+buttonRadius = "2px"
+borderColor = "#CFC8BA"
+showWidgetBorder = true
+showSidebarBorder = true
+dataframeBorderColor = "#E3DDD0"
+dataframeHeaderBackgroundColor = "#F6F2EA"
+
+[theme.sidebar]
+backgroundColor = "#F6F2EA"
+secondaryBackgroundColor = "#FDFBF7"
